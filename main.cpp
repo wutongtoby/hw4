@@ -25,21 +25,23 @@
 #define FXOS8700Q_WHOAMI_VAL 0xC7
 
 // /Acc/run
-// for the accelerometer and RPC ------------------------------------------
+// for the accelerometer ------------------------------------------
 I2C i2c( PTD9,PTD8);
 int m_addr = FXOS8700CQ_SLAVE_ADDR1;
 void acc(void);
+EventQueue acc_queue(32 * EVENTS_EVENT_SIZE);
+Thread acc_thread(osPriorityNormal, 12 * 1024 /*120K stack size*/);
 void FXOS8700CQ_readRegs(int addr, uint8_t * data, int len);
 void FXOS8700CQ_writeRegs(uint8_t * data, int len);
 uint8_t who_am_i, data[2], res[6];
 int16_t acc16;
 float axis[3];
 //----------------------------------------------------------------
-// for Xbee
+// for Xbee and RPC
 RawSerial pc(USBTX, USBRX);
 RawSerial xbee(D12, D11);
-EventQueue queue(32 * EVENTS_EVENT_SIZE);
-Thread mythread(osPriorityNormal, 120 * 1024 /*120K stack size*/);
+EventQueue RPC_queue(32 * EVENTS_EVENT_SIZE);
+Thread RPC_thread(osPriorityHigh, 5 * 1024 /*120K stack size*/);
 void xbee_rx_interrupt(void);
 void xbee_rx(void);
 void reply_messange(char *xbee_reply, char *messange);
@@ -47,8 +49,8 @@ void check_addr(char *xbee_reply, char *messenger);
 //-------------------------------------------------------------------
 void send_value(Arguments *in, Reply *out);
 RPCFunction A(&send_value, "Send");
-float temp[10][3];
-int times;
+float temp[100][3];
+int times = 0;
 
 int main(void) {
     // initialize acc
@@ -95,20 +97,22 @@ int main(void) {
     xbee.printf("ATCN\r\n");
     reply_messange(xbee_reply, "exit AT mode");
     xbee.getc();
-
+    
     // start
     pc.printf("start\r\n");
-    mythread.start(callback(&queue, &EventQueue::dispatch_forever));
+    //acc_thread.start(callback(&acc_queue, &EventQueue::dispatch_forever));
+    acc_thread.start(&acc);
+    RPC_thread.start(callback(&RPC_queue, &EventQueue::dispatch_forever));
 
+    //acc_queue.call_every(500, acc);
     // Setup a serial interrupt function of receiving data from xbee
     xbee.attach(xbee_rx_interrupt, Serial::RxIrq);
-    //queue.call_every(500, acc);
 }
 
 void xbee_rx_interrupt(void)
 {
     xbee.attach(NULL, Serial::RxIrq); // detach interrupt
-    queue.call(&xbee_rx);
+    RPC_queue.call(&xbee_rx);
 }
 
 void xbee_rx(void)
@@ -161,25 +165,28 @@ void check_addr(char *xbee_reply, char *messenger){
 
 
 void acc(void) {
-    FXOS8700CQ_readRegs(FXOS8700Q_WHOAMI, &who_am_i, 1);
-    FXOS8700CQ_readRegs(FXOS8700Q_OUT_X_MSB, res, 6);
-    acc16 = (res[0] << 6) | (res[1] >> 2);
-    if (acc16 > UINT14_MAX/2)
-        acc16 -= UINT14_MAX;
-    axis[0] = ((float)acc16) / 4096.0f;
-    acc16 = (res[2] << 6) | (res[3] >> 2);
-    if (acc16 > UINT14_MAX/2)
-        acc16 -= UINT14_MAX;
-    axis[1] = ((float)acc16) / 4096.0f;
-    acc16 = (res[4] << 6) | (res[5] >> 2);
-    if (acc16 > UINT14_MAX/2)
-        acc16 -= UINT14_MAX;
-    axis[2] = ((float)acc16) / 4096.0f;
-    
-    temp[times][0] =  axis[0];
-    temp[times][1] =  axis[1];
-    temp[times][2] =  axis[2];
-    times++;
+    while (true) {
+        FXOS8700CQ_readRegs(FXOS8700Q_WHOAMI, &who_am_i, 1);
+        FXOS8700CQ_readRegs(FXOS8700Q_OUT_X_MSB, res, 6);
+        acc16 = (res[0] << 6) | (res[1] >> 2);
+        if (acc16 > UINT14_MAX/2)
+            acc16 -= UINT14_MAX;
+        axis[0] = ((float)acc16) / 4096.0f;
+        acc16 = (res[2] << 6) | (res[3] >> 2);
+        if (acc16 > UINT14_MAX/2)
+            acc16 -= UINT14_MAX;
+        axis[1] = ((float)acc16) / 4096.0f;
+        acc16 = (res[4] << 6) | (res[5] >> 2);
+        if (acc16 > UINT14_MAX/2)
+            acc16 -= UINT14_MAX;
+        axis[2] = ((float)acc16) / 4096.0f;
+        
+        temp[times][0] =  axis[0];
+        temp[times][1] =  axis[1];
+        temp[times][2] =  axis[2];
+        times++;
+        wait(0.5);
+    }
 }
 
 void FXOS8700CQ_readRegs(int addr, uint8_t * data, int len) {

@@ -84,29 +84,31 @@ print("start sending RPC")
 #----------------------------------------------------------------
 times = np.zeros(10)
 
+s.write("\r".encode())
+s.readline()
+
 for i in range(10):
     # send RPC to remote
     s.write("/Send/run\r".encode())
     print(i)
     time.sleep(1)
     line = s.readline()
-    times[i] = float(line)
-    
+
+    times[i] = int(line)
+    #print("times is" + times[i])
     # send the data to another python program
-    for j in range(times - 1):    
+    for j in range(int(times[i])):    
         line = s.readline()
         x = float(line)
-        
         line = s.readline()
         y = float(line)
-        
         line = s.readline()
         z = float(line)
-        
         if (x * x + y * y > z * z):
             mqttc.publish(topic, "t")
         else:
             mqttc.publish(topic, "n")
+        
 s.close()
 plt.plot(range(10), times)
 plt.title('# Collected data plot')
